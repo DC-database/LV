@@ -1,6 +1,34 @@
-const scriptURL = 'https://script.google.com/macros/s/AKfycbzvjas9vaImNNHYEUjD6yRjomvO77Dyix5CIFa4i9qg6xTo9hhNAF-bPaL1gimu_Z5M/exec';
+const scriptURL = 'https://script.google.com/macros/s/AKfycbzO6-Vs2JD1jlABzfkIrxMeWUPfqaaSahZg-9H5VhMAwaXaVL-pCE9v5fF2-aJhmahb/exec';
 let currentEmployee = null;
 let currentHr = null;
+
+function formatDisplayDate(dateString) {
+  if (!dateString || dateString === 'N/A') return 'N/A';
+  
+  try {
+    const date = new Date(dateString);
+    if (isNaN(date.getTime())) return 'Invalid Date';
+    
+    const months = [
+      'January', 'February', 'March', 'April', 
+      'May', 'June', 'July', 'August',
+      'September', 'October', 'November', 'December'
+    ];
+    
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = months[date.getMonth()];
+    const year = date.getFullYear();
+    
+    return `${day}-${month}-${year}`;
+  } catch (e) {
+    console.error('Error formatting date:', e);
+    return 'Invalid Date';
+  }
+}
+
+function formatHrTableDate(dateString) {
+  return formatDisplayDate(dateString);
+}
 
 function calculateEndDate() {
   const startDate = document.getElementById('start-date').value;
@@ -91,6 +119,7 @@ function submitRequest() {
       document.getElementById('end-date').value = '';
       document.getElementById('total-days').value = '1';
       document.getElementById('reason').value = '';
+      toggleRequestForm();
     } else {
       throw new Error(data.message || 'Error submitting request');
     }
@@ -98,6 +127,96 @@ function submitRequest() {
   .catch(error => {
     showError(msgElement, error.message || 'Error submitting request');
   });
+}
+
+function loadEmployeeRequests() {
+  const requestsList = document.getElementById('requests-list');
+  requestsList.innerHTML = '<p class="loading">Loading your requests...</p>';
+
+  fetch(`${scriptURL}?action=getEmployeeRequests&id=${encodeURIComponent(currentEmployee.id)}`, {
+    method: 'POST',
+  })
+  .then(res => {
+    if (!res.ok) throw new Error('Network response was not ok');
+    return res.json();
+  })
+  .then(data => {
+    if (data.status === 'ok') {
+      requestsList.innerHTML = '';
+      
+      if (data.requests && data.requests.length) {
+        // Filter for current year requests
+        const currentYear = new Date().getFullYear();
+        const currentYearRequests = data.requests.filter(request => {
+          if (!request.startDate) return false;
+          const requestYear = new Date(request.startDate).getFullYear();
+          return requestYear === currentYear;
+        });
+        
+        const olderRequests = data.requests.filter(request => {
+          if (!request.startDate) return false;
+          const requestYear = new Date(request.startDate).getFullYear();
+          return requestYear < currentYear;
+        });
+
+        // Create current year section
+        if (currentYearRequests.length > 0) {
+          const currentYearHeader = document.createElement('h3');
+          currentYearHeader.textContent = `${currentYear} Requests`;
+          requestsList.appendChild(currentYearHeader);
+
+          currentYearRequests.forEach(request => {
+            requestsList.appendChild(createRequestItem(request));
+          });
+        } else {
+          requestsList.innerHTML += '<p>No leave requests for current year.</p>';
+        }
+
+        // Create older requests section if they exist
+        if (olderRequests.length > 0) {
+          const olderHeader = document.createElement('h3');
+          olderHeader.textContent = 'Older Requests';
+          requestsList.appendChild(olderHeader);
+
+          const showOlderBtn = document.createElement('button');
+          showOlderBtn.textContent = 'Show Older Requests';
+          showOlderBtn.style.margin = '10px 0';
+          showOlderBtn.onclick = () => {
+            olderRequests.forEach(request => {
+              requestsList.appendChild(createRequestItem(request));
+            });
+            showOlderBtn.style.display = 'none';
+          };
+          requestsList.appendChild(showOlderBtn);
+        }
+      } else {
+        requestsList.innerHTML = '<p>No leave requests found.</p>';
+      }
+    } else {
+      throw new Error(data.message || 'Error loading requests');
+    }
+  })
+  .catch(error => {
+    console.error('Error loading requests:', error);
+    requestsList.innerHTML = `<p class="error">Error: ${error.message || 'Failed to load requests'}</p>`;
+  });
+}
+
+function createRequestItem(request) {
+  const requestItem = document.createElement('div');
+  requestItem.className = 'request-item';
+  const statusClass = request.status.toLowerCase();
+  
+  requestItem.innerHTML = `
+    <h3>${request.leaveType} Leave</h3>
+    <p><strong>Dates:</strong> ${request.startDate || ''} to ${request.endDate || ''}</p>
+    ${request.reason ? `<p><strong>Reason:</strong> ${request.reason}</p>` : ''}
+    <p><strong>Status:</strong> <span class="status ${statusClass}">${request.status || 'Pending'}</span></p>
+    ${request.remarks ? `<div class="remarks"><strong>Remarks:</strong> ${request.remarks}</div>` : ''}
+    ${request.status === 'Rejected' ? 
+      `<button onclick="resubmitRequest('${request.id}')">Resubmit</button>` : ''}
+  `;
+  return requestItem;
 }
 
 function showStatusPage() {
@@ -114,57 +233,6 @@ function showStatusPage() {
 function backToRequestForm() {
   document.getElementById('status-container').style.display = 'none';
   document.getElementById('request-container').style.display = 'block';
-}
-
-function loadEmployeeRequests() {
-  const requestsList = document.getElementById('requests-list');
-  requestsList.innerHTML = '<p class="loading">Loading your requests...</p>';
-
-  fetch(`${scriptURL}?action=getEmployeeRequests&id=${encodeURIComponent(currentEmployee.id)}`, {
-    method: 'POST',
-  })
-  .then(res => res.json())
-  .then(data => {
-    if (data.status === 'ok' && data.requests?.length) {
-      requestsList.innerHTML = '';
-      data.requests.forEach(request => {
-        const requestItem = document.createElement('div');
-        requestItem.className = 'request-item';
-        const statusClass = request.status.toLowerCase();
-        
-        requestItem.innerHTML = `
-          <h3>${request.leaveType} Leave</h3>
-          <p><strong>Dates:</strong> ${formatDisplayDate(request.startDate)} to ${formatDisplayDate(request.endDate)}</p>
-          <p><strong>Reason:</strong> ${request.reason}</p>
-          <p><strong>Status:</strong> <span class="status ${statusClass}">${request.status}</span></p>
-          ${request.remarks ? `<div class="remarks"><strong>Remarks:</strong> ${request.remarks}</div>` : ''}
-          ${request.status === 'Rejected' ? 
-            `<button onclick="resubmitRequest('${request.id}')">Resubmit</button>` : ''}
-        `;
-        requestsList.appendChild(requestItem);
-      });
-    } else {
-      requestsList.innerHTML = '<p>No leave requests found.</p>';
-    }
-  })
-  .catch(error => {
-    requestsList.innerHTML = `<p class="error">Error: ${error.message || 'Failed to load requests'}</p>`;
-  });
-}
-
-function formatDisplayDate(dateString) {
-  if (!dateString || dateString === 'N/A') return 'N/A';
-  try {
-    const date = new Date(dateString);
-    if (isNaN(date)) return dateString;
-    
-    const year = date.getFullYear();
-    const day = String(date.getDate()).padStart(2, '0');
-    const month = date.toLocaleString('default', { month: 'short' });
-    return `${day}-${month}-${year}`;
-  } catch (e) {
-    return dateString;
-  }
 }
 
 function resubmitRequest(requestId) {
@@ -234,6 +302,8 @@ function verifyHr() {
       document.getElementById('hr-approval-container').style.display = 'block';
       msgElement.innerText = '';
       loadActiveStaff();
+      loadOnLeaveStaff();
+      loadPendingRequests();
     } else {
       throw new Error(data.message || 'Invalid HR credentials');
     }
@@ -243,34 +313,65 @@ function verifyHr() {
   });
 }
 
+function handleDashboardCardClick(section) {
+  const targetSection = document.getElementById(`${section}-section`);
+  const isHidden = targetSection.style.display === 'none';
+  targetSection.style.display = isHidden ? 'block' : 'none';
+  if (isHidden) {
+    targetSection.scrollIntoView({ behavior: 'smooth' });
+  }
+}
+
 function loadActiveStaff() {
   const activeBody = document.getElementById('active-staff-body');
-  activeBody.innerHTML = '<tr><td colspan="2" class="loading">Loading active staff...</td></tr>';
+  if (!activeBody) {
+    console.error('Active staff body element not found');
+    return;
+  }
+  
+  activeBody.innerHTML = '<tr><td colspan="5" class="loading">Loading active staff...</td></tr>';
 
   fetch(`${scriptURL}?action=getActiveStaff`, {
     method: 'POST',
   })
-  .then(res => res.json())
+  .then(res => {
+    if (!res.ok) throw new Error('Network response was not ok');
+    return res.json();
+  })
   .then(data => {
-    if (data.status === 'ok' && data.staff?.length) {
+    if (data.status === 'ok') {
       document.getElementById('active-count').textContent = data.staff.length;
+      document.getElementById('total-count').textContent = data.totalEmployees;
+      document.getElementById('onleave-count').textContent = data.onLeaveCount;
+
       activeBody.innerHTML = '';
       
-      data.staff.forEach(employee => {
-        const row = document.createElement('tr');
-        row.innerHTML = `
-          <td>${employee.id}</td>
-          <td>${employee.name}</td>
-        `;
-        activeBody.appendChild(row);
-      });
+      if (data.staff?.length) {
+        const currentYear = new Date().getFullYear();
+        
+        data.staff.forEach(employee => {
+          // Only show applications from current year
+          const hasCurrentYearApp = employee.hasPending || employee.hasApproved;
+          const row = document.createElement('tr');
+          row.innerHTML = `
+            <td>${employee.id}</td>
+            <td><a class="history-link" onclick="showStaffVacationHistory('${employee.id}', '${employee.name}')">${employee.name}</a></td>
+            <td>${hasCurrentYearApp ? 'Yes' : 'No'}</td>
+            <td>${hasCurrentYearApp ? employee.month : ''}</td>
+            <td>${employee.hasPending ? 'Pending' : employee.hasApproved ? 'Approved' : ''}</td>
+          `;
+          activeBody.appendChild(row);
+        });
+      } else {
+        activeBody.innerHTML = '<tr><td colspan="5">No active staff found</td></tr>';
+      }
     } else {
-      activeBody.innerHTML = '<tr><td colspan="2">No active staff found</td></tr>';
-      document.getElementById('active-count').textContent = '0';
+      throw new Error(data.message || 'Error loading active staff');
     }
   })
   .catch(error => {
-    activeBody.innerHTML = `<tr><td colspan="2" class="error">Error: ${error.message || 'Load failed'}</td></tr>`;
+    console.error('Error loading active staff:', error);
+    activeBody.innerHTML = `<tr><td colspan="5" class="error">Error: ${error.message || 'Failed to load active staff'}</td></tr>`;
   });
 }
 
@@ -283,23 +384,26 @@ function loadOnLeaveStaff() {
   })
   .then(res => res.json())
   .then(data => {
-    if (data.status === 'ok' && data.staff?.length) {
-      document.getElementById('onleave-count').textContent = data.staff.length;
+    if (data.status === 'ok') {
+      document.getElementById('onleave-count').textContent = data.staff?.length || 0;
       onLeaveBody.innerHTML = '';
       
-      data.staff.forEach(employee => {
-        const row = document.createElement('tr');
-        row.innerHTML = `
-          <td>${employee.name}<br><small>ID: ${employee.id}</small></td>
-          <td>${employee.leaveType}</td>
-          <td>${formatDisplayDate(employee.startDate)}</td>
-          <td>${formatDisplayDate(employee.endDate)}</td>
-        `;
-        onLeaveBody.appendChild(row);
-      });
+      if (data.staff?.length) {
+        data.staff.forEach(employee => {
+          const row = document.createElement('tr');
+          row.innerHTML = `
+            <td><a class="history-link" onclick="showStaffVacationHistory('${employee.id}', '${employee.name}')">${employee.name}</a><br><small>ID: ${employee.id}</small></td>
+            <td>${employee.leaveType}</td>
+            <td class="date-display">${formatHrTableDate(employee.startDate)}</td>
+            <td class="date-display">${formatHrTableDate(employee.endDate)}</td>
+          `;
+          onLeaveBody.appendChild(row);
+        });
+      } else {
+        onLeaveBody.innerHTML = '<tr><td colspan="4">No staff currently on leave</td></tr>';
+      }
     } else {
-      onLeaveBody.innerHTML = '<tr><td colspan="4">No staff currently on leave</td></tr>';
-      document.getElementById('onleave-count').textContent = '0';
+      throw new Error(data.message || 'Error loading staff on leave');
     }
   })
   .catch(error => {
@@ -316,27 +420,32 @@ function loadPendingRequests() {
   })
   .then(res => res.json())
   .then(data => {
-    if (data.status === 'ok' && data.requests?.length) {
+    if (data.status === 'ok') {
+      document.getElementById('pending-count').textContent = data.requests?.length || 0;
       pendingBody.innerHTML = '';
       
-      data.requests.forEach(request => {
-        const row = document.createElement('tr');
-        row.innerHTML = `
-          <td>${request.employeeName}<br><small>ID: ${request.employeeId}</small></td>
-          <td>${request.leaveType}</td>
-          <td class="date-display">${formatDisplayDate(request.startDate)}</td>
-          <td class="date-display">${formatDisplayDate(request.endDate)}</td>
-          <td>${request.reason || '-'}</td>
-          <td class="action-buttons">
-            <textarea id="remarks-${request.id}" placeholder="HR remarks"></textarea>
-            <button onclick="approveRequest('${request.id}')" class="approve-btn">Approve</button>
-            <button onclick="rejectRequest('${request.id}')" class="reject-btn">Reject</button>
-          </td>
-        `;
-        pendingBody.appendChild(row);
-      });
+      if (data.requests?.length) {
+        data.requests.forEach(request => {
+          const row = document.createElement('tr');
+          row.innerHTML = `
+            <td>${request.employeeName}<br><small>ID: ${request.employeeId}</small></td>
+            <td>${request.leaveType}</td>
+            <td class="date-display">${formatHrTableDate(request.startDate)}</td>
+            <td class="date-display">${formatHrTableDate(request.endDate)}</td>
+            <td>${request.reason || '-'}</td>
+            <td class="action-buttons">
+              <textarea id="remarks-${request.id}" placeholder="HR remarks"></textarea>
+              <button onclick="approveRequest('${request.id}')" class="approve-btn">Approve</button>
+              <button onclick="rejectRequest('${request.id}')" class="reject-btn">Reject</button>
+            </td>
+          `;
+          pendingBody.appendChild(row);
+        });
+      } else {
+        pendingBody.innerHTML = '<tr><td colspan="6">No pending requests</td></tr>';
+      }
     } else {
-      pendingBody.innerHTML = '<tr><td colspan="6">No pending requests</td></tr>';
+      throw new Error(data.message || 'Error loading pending requests');
     }
   })
   .catch(error => {
@@ -369,6 +478,7 @@ function updateRequestStatus(requestId, status, remarks) {
     if (data.status === 'ok') {
       loadPendingRequests();
       loadOnLeaveStaff();
+      loadActiveStaff();
     } else {
       throw new Error(data.message || 'Error updating request status');
     }
@@ -376,26 +486,6 @@ function updateRequestStatus(requestId, status, remarks) {
   .catch(error => {
     alert(error.message || 'Error updating request status');
   });
-}
-
-function switchHrTab(tabName) {
-  document.getElementById('tab-active').classList.remove('active');
-  document.getElementById('tab-onleave').classList.remove('active');
-  document.getElementById('tab-pending').classList.remove('active');
-  document.getElementById('active-section').style.display = 'none';
-  document.getElementById('onleave-section').style.display = 'none';
-  document.getElementById('pending-section').style.display = 'none';
-  
-  document.getElementById(`tab-${tabName}`).classList.add('active');
-  document.getElementById(`${tabName}-section`).style.display = 'block';
-  
-  if (tabName === 'active') {
-    loadActiveStaff();
-  } else if (tabName === 'onleave') {
-    loadOnLeaveStaff();
-  } else if (tabName === 'pending') {
-    loadPendingRequests();
-  }
 }
 
 function hrLogout() {
@@ -431,7 +521,6 @@ function showLoading(element, message) {
   element.innerText = message;
 }
 
-// Mobile menu setup
 function setupMobileMenu() {
   const menuBtn = document.createElement('div');
   menuBtn.id = 'mobile-menu-btn';
@@ -446,9 +535,137 @@ function setupMobileMenu() {
   });
 }
 
-// Initialize after load
+function toggleRequestForm() {
+  const formContainer = document.getElementById('request-form-container');
+  const toggleBtn = document.getElementById('toggle-form-btn');
+  
+  if (formContainer.style.display === 'none') {
+    formContainer.style.display = 'block';
+    toggleBtn.textContent = 'Hide Form';
+  } else {
+    formContainer.style.display = 'none';
+    toggleBtn.textContent = 'Apply for Leave';
+  }
+}
+
+function showMyVacationHistory() {
+  if (!currentEmployee) return;
+  
+  fetch(`${scriptURL}?action=getVacationHistory&id=${encodeURIComponent(currentEmployee.id)}`, {
+    method: 'POST',
+  })
+  .then(res => res.json())
+  .then(data => {
+    if (data.status === 'ok') {
+      showVacationHistory(currentEmployee.name, data.history);
+    } else {
+      throw new Error(data.message || 'Error loading vacation history');
+    }
+  })
+  .catch(error => {
+    alert(error.message || 'Error loading vacation history');
+  });
+}
+
+function showStaffVacationHistory(employeeId, employeeName) {
+  fetch(`${scriptURL}?action=getVacationHistory&id=${encodeURIComponent(employeeId)}`, {
+    method: 'POST',
+  })
+  .then(res => res.json())
+  .then(data => {
+    if (data.status === 'ok') {
+      showVacationHistory(employeeName, data.history);
+    } else {
+      throw new Error(data.message || 'Error loading vacation history');
+    }
+  })
+  .catch(error => {
+    alert(error.message || 'Error loading vacation history');
+  });
+}
+
+function showVacationHistory(name, history) {
+  const modal = document.getElementById('vacation-history-modal');
+  const title = document.getElementById('history-title');
+  const content = document.getElementById('vacation-history-content');
+  
+  title.textContent = `${name}'s Vacation History`;
+  content.innerHTML = '';
+  
+  if (history.length === 0) {
+    content.innerHTML = '<p>No vacation history found</p>';
+  } else {
+    // Group by year
+    const groupedByYear = {};
+    history.forEach(item => {
+      if (!groupedByYear[item.year]) {
+        groupedByYear[item.year] = [];
+      }
+      groupedByYear[item.year].push(item);
+    });
+    
+    // Create timeline for each year
+    for (const year in groupedByYear) {
+      const yearContainer = document.createElement('div');
+      yearContainer.className = 'year-container';
+      
+      const yearHeader = document.createElement('h4');
+      yearHeader.className = 'year-header';
+      yearHeader.textContent = year;
+      yearContainer.appendChild(yearHeader);
+      
+      const timeline = document.createElement('div');
+      timeline.className = 'timeline';
+      
+      groupedByYear[year].forEach((item, index) => {
+        const entry = document.createElement('div');
+        entry.className = `timeline-entry ${index % 2 === 0 ? 'left' : 'right'}`;
+        
+        const dot = document.createElement('div');
+        dot.className = 'timeline-dot';
+        
+        const contentDiv = document.createElement('div');
+        contentDiv.className = 'timeline-content';
+        contentDiv.innerHTML = `
+          <div class="timeline-month">${item.month}</div>
+          <div class="timeline-date">${item.date.split('-')[0]} ${item.date.split('-')[1]}</div>
+        `;
+        
+        entry.appendChild(dot);
+        entry.appendChild(contentDiv);
+        timeline.appendChild(entry);
+      });
+      
+      yearContainer.appendChild(timeline);
+      content.appendChild(yearContainer);
+    }
+  }
+  
+  modal.classList.add('show');
+}
+
+function closeModal() {
+  document.getElementById('vacation-history-modal').classList.remove('show');
+}
+
+window.onclick = function(event) {
+  const modal = document.getElementById('vacation-history-modal');
+  if (event.target === modal) {
+    closeModal();
+  }
+};
+
 window.addEventListener('DOMContentLoaded', () => {
   if (window.innerWidth < 768) {
     setupMobileMenu();
   }
+  
+  document.querySelectorAll('.dashboard-card').forEach(card => {
+    card.addEventListener('click', function() {
+      const target = this.getAttribute('data-target');
+      if (target) {
+        handleDashboardCardClick(target);
+      }
+    });
+  });
 });
